@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import { validateQuestion } from "../util/validation.js";
 
 const mediaTextSchema = new mongoose.Schema(
   {
@@ -24,6 +23,16 @@ const questionSchema = new mongoose.Schema(
     correctAnswer: { type: Number, required: true },
     explanation: { type: mediaTextSchema, default: () => ({}) },
     tags: { type: [String], default: [] },
+    categories: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Category",
+        },
+      ],
+      default: [],
+    },
+    difficulty: { type: Number, required: true, enum: [1, 2, 3, 4, 5] },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -33,15 +42,7 @@ const questionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Delegate validation to util/validation.js
-questionSchema.pre("validate", function (next) {
-  try {
-    validateQuestion(this);
-    next();
-  } catch (err) {
-    next(err);
-  }
-});
+// Validation is now handled in route middleware (validateQuestionMiddleware)
 
 const Question = mongoose.model("Question", questionSchema);
 export default Question;

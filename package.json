@@ -37,6 +37,7 @@
     "mongoose": "^8.19.2",
     "morgan": "^1.10.1",
     "multer": "^2.0.2",
+    "streamifier": "^0.1.1",
     "winston": "^3.18.3"
   },
   "devDependencies": {

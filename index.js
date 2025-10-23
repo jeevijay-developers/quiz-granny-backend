@@ -5,12 +5,21 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
+import questionsRouter from "./routes/QuestionsRoute.js";
+import categoryRouter from "./routes/CategoryRoute.js";
 
 const app = express();
 
+// CORS Configuration
+const corsOptions = {
+  origin: process.env.NEXT_PUBLIC_ADMIN_URL || "http://localhost:3000",
+  credentials: true,
+  optionsSuccessStatus: 200,
+};
+
 // Middlewares
 app.use(helmet());
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(morgan("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -19,15 +28,13 @@ app.use(cookieParser());
 // Basic routes
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
-// Placeholder API router (replace with real routers)
-app.use("/api", (req, res) =>
-  res.status(404).json({ error: "No API routes configured yet" })
-);
+// API routes
+app.use("/api/questions", questionsRouter);
+app.use("/api/categories", categoryRouter);
 
 // Config
-const PORT = process.env.PORT || 3000;
-const MONGO_URI =
-  process.env.MONGO_URI || "mongodb://localhost:27017/quiz-granny";
+const PORT = process.env.PORT;
+const MONGO_URI = process.env.MONGO_URI;
 
 // Connect to MongoDB and start server
 mongoose
