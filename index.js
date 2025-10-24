@@ -12,7 +12,7 @@ const app = express();
 
 // CORS Configuration
 const corsOptions = {
-  origin: process.env.NEXT_PUBLIC_ADMIN_URL || "http://localhost:3000",
+  origin: process.env.NEXT_PUBLIC_ADMIN_URL,
   credentials: true,
   optionsSuccessStatus: 200,
 };
