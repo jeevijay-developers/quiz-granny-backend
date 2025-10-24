@@ -1,4 +1,5 @@
 import Category from "../models/Category.js";
+import Questions from "../models/Questions.js";
 
 // Create a new category
 export async function createCategory(req, res) {
@@ -101,6 +102,12 @@ export async function deleteCategory(req, res) {
     if (!category) {
       return res.status(404).json({ error: "Category not found" });
     }
+
+    // Remove this category from all questions that reference it
+    await Questions.updateMany(
+      { categories: req.params.id },
+      { $pull: { categories: req.params.id } }
+    );
 
     return res.status(200).json({
       message: "Category deleted successfully",

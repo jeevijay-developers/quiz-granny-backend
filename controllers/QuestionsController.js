@@ -1,4 +1,5 @@
 import Question from "../models/Questions.js";
+import Category from "../models/Category.js";
 import { uploadBufferToCloudinary } from "../util/uploadToCloudinary.js";
 
 export async function createQuestion(req, res) {
@@ -83,13 +84,46 @@ export async function createQuestion(req, res) {
       createdBy = formCreatedBy || null;
     }
 
+    // Validate categories if provided
+    let categoryIds = [];
+    if (req.body.categories) {
+      try {
+        categoryIds =
+          typeof req.body.categories === "string"
+            ? JSON.parse(req.body.categories)
+            : req.body.categories;
+
+        // Ensure it's an array
+        if (!Array.isArray(categoryIds)) {
+          categoryIds = [categoryIds];
+        }
+
+        // Validate that all category IDs exist in the database
+        if (categoryIds.length > 0) {
+          const existingCategories = await Category.find({
+            _id: { $in: categoryIds },
+          });
+
+          if (existingCategories.length !== categoryIds.length) {
+            return res.status(400).json({
+              error: "One or more category IDs are invalid or do not exist",
+            });
+          }
+        }
+      } catch (error) {
+        return res.status(400).json({
+          error: "Invalid categories format",
+        });
+      }
+    }
+
     const q = new Question({
       title,
       options,
       correctAnswer: parseInt(correctAnswer, 10),
       explanation,
       tags: parsedTags,
-      category: req.body.category || "General",
+      categories: categoryIds,
       difficulty: parseInt(req.body.difficulty, 10) || 3,
       createdBy: createdBy || null,
     });
@@ -198,9 +232,38 @@ export async function updateQuestion(req, res) {
       existing.createdBy = req.body.createdBy || null;
     }
 
-    // Update category if provided
-    if (req.body.category !== undefined) {
-      existing.category = req.body.category;
+    // Update categories if provided
+    if (req.body.categories !== undefined) {
+      try {
+        let categoryIds =
+          typeof req.body.categories === "string"
+            ? JSON.parse(req.body.categories)
+            : req.body.categories;
+
+        // Ensure it's an array
+        if (!Array.isArray(categoryIds)) {
+          categoryIds = [categoryIds];
+        }
+
+        // Validate that all category IDs exist in the database
+        if (categoryIds.length > 0) {
+          const existingCategories = await Category.find({
+            _id: { $in: categoryIds },
+          });
+
+          if (existingCategories.length !== categoryIds.length) {
+            return res.status(400).json({
+              error: "One or more category IDs are invalid or do not exist",
+            });
+          }
+        }
+
+        existing.categories = categoryIds;
+      } catch (error) {
+        return res.status(400).json({
+          error: "Invalid categories format",
+        });
+      }
     }
 
     // Update difficulty if provided
@@ -244,5 +307,26 @@ export async function getQuestionsByTag(req, res) {
     return res
       .status(500)
       .json({ error: "Error in fetching questions by tag" });
+  }
+}
+
+export async function getQuestionsByCategory(req, res) {
+  try {
+    const categoryId = req.params.categoryId;
+    const questions = await Question.find({ categories: categoryId }).populate(
+      "categories"
+    );
+
+    if (questions.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "No questions found with the specified category" });
+    }
+
+    return res.status(200).json(questions);
+  } catch (error) {
+    return res
+      .status(500)
+      .json({ error: "Error in fetching questions by category" });
   }
 }
