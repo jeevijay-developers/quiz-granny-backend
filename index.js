@@ -7,6 +7,7 @@ import morgan from "morgan";
 import cookieParser from "cookie-parser";
 import questionsRouter from "./routes/QuestionsRoute.js";
 import categoryRouter from "./routes/CategoryRoute.js";
+import userRouter from "./routes/UserRoute.js";
 
 const app = express();
 
@@ -31,6 +32,7 @@ app.get("/health", (req, res) => res.json({ status: "ok" }));
 // API routes
 app.use("/api/questions", questionsRouter);
 app.use("/api/categories", categoryRouter);
+app.use("/api/users", userRouter);
 
 // Config
 const PORT = process.env.PORT;

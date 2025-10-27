@@ -7,14 +7,13 @@ export async function createQuestion(req, res) {
     // Check if request is JSON format (nested objects) or form-data format (flat fields)
     const isJsonFormat = req.body.title && typeof req.body.title === "object";
 
-    let title, options, explanation, parsedTags, correctAnswer, createdBy;
+    let title, options, explanation, correctAnswer, createdBy;
 
     if (isJsonFormat) {
       // Handle JSON body format (application/json)
       title = req.body.title || { text: "", image: "" };
       options = req.body.options || [];
       explanation = req.body.explanation || { text: "", image: "" };
-      parsedTags = req.body.tags || [];
       correctAnswer = req.body.correctAnswer;
       createdBy = req.body.createdBy || null;
     } else {
@@ -26,8 +25,8 @@ export async function createQuestion(req, res) {
         optionText2,
         optionText3,
         explanationText,
-        tags,
-        createdBy: formCreatedBy,
+        correctAnswer,
+        createdBy,
       } = req.body;
 
       // Build title object
@@ -65,21 +64,6 @@ export async function createQuestion(req, res) {
         );
         explanation.image = uploaded.secure_url;
       }
-
-      // Parse tags (can be sent as comma-separated string or JSON array)
-      parsedTags = [];
-      if (tags) {
-        try {
-          parsedTags = typeof tags === "string" ? JSON.parse(tags) : tags;
-        } catch {
-          // If not valid JSON, treat as comma-separated string
-          parsedTags = tags
-            .split(",")
-            .map((tag) => tag.trim())
-            .filter(Boolean);
-        }
-      }
-
       correctAnswer = req.body.correctAnswer;
       createdBy = formCreatedBy || null;
     }
@@ -122,7 +106,6 @@ export async function createQuestion(req, res) {
       options,
       correctAnswer: parseInt(correctAnswer, 10),
       explanation,
-      tags: parsedTags,
       categories: categoryIds,
       difficulty: parseInt(req.body.difficulty, 10) || 3,
       createdBy: createdBy || null,
@@ -211,22 +194,6 @@ export async function updateQuestion(req, res) {
       existing.correctAnswer = parseInt(req.body.correctAnswer, 10);
     }
 
-    // Update tags if provided
-    if (req.body.tags !== undefined) {
-      try {
-        existing.tags =
-          typeof req.body.tags === "string"
-            ? JSON.parse(req.body.tags)
-            : req.body.tags;
-      } catch {
-        // If not valid JSON, treat as comma-separated string
-        existing.tags = req.body.tags
-          .split(",")
-          .map((tag) => tag.trim())
-          .filter(Boolean);
-      }
-    }
-
     // Update createdBy if provided
     if (req.body.createdBy !== undefined) {
       existing.createdBy = req.body.createdBy || null;
@@ -288,25 +255,6 @@ export async function deleteQuestion(req, res) {
     return res.status(200).json({ message: "Question deleted successfully" });
   } catch (error) {
     return res.status(500).json({ error: "Error in deleting question" });
-  }
-}
-
-export async function getQuestionsByTag(req, res) {
-  try {
-    const tag = req.params.tag;
-    const questions = await Question.find({ tags: tag });
-
-    if (questions.length === 0) {
-      return res
-        .status(404)
-        .json({ error: "No questions found with the specified tag" });
-    }
-
-    return res.status(200).json(questions);
-  } catch (error) {
-    return res
-      .status(500)
-      .json({ error: "Error in fetching questions by tag" });
   }
 }
 

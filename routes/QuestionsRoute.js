@@ -4,7 +4,6 @@ import {
   getQuestionById,
   updateQuestion,
   deleteQuestion,
-  getQuestionsByTag,
   getQuestionsByCategory,
 } from "../controllers/QuestionsController.js";
 import express from "express";
@@ -36,7 +35,6 @@ const conditionalMulter = (req, res, next) => {
 // Routes with conditional multer middleware and validation for create and update
 router.post("/", conditionalMulter, validateQuestionMiddleware, createQuestion);
 router.get("/", getQuestions);
-router.get("/tag/:tag", getQuestionsByTag);
 router.get("/category/:categoryId", getQuestionsByCategory);
 router.get("/:id", getQuestionById);
 router.put("/:id", conditionalMulter, updateQuestion); // Update doesn't need full validation

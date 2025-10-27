@@ -1,3 +1,4 @@
+import { populate } from "dotenv";
 import mongoose from "mongoose";
 
 const mediaTextSchema = new mongoose.Schema(
@@ -22,7 +23,6 @@ const questionSchema = new mongoose.Schema(
     options: { type: [optionSchema], required: true },
     correctAnswer: { type: Number, required: true },
     explanation: { type: mediaTextSchema, default: () => ({}) },
-    tags: { type: [String], default: [] },
     categories: {
       type: [
         {
