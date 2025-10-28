@@ -1,6 +1,88 @@
 import Question from "../models/Questions.js";
 import Category from "../models/Category.js";
+import User from "../models/User.js";
 import { uploadBufferToCloudinary } from "../util/uploadToCloudinary.js";
+import cloudinary from "../util/cloudinary.js";
+import mongoose from "mongoose";
+
+// Helper function to extract public_id from Cloudinary URL
+function getPublicIdFromUrl(url) {
+  if (!url) return null;
+  try {
+    // Extract public_id from URL
+    // Example: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/folder/filename.jpg
+    const parts = url.split("/");
+    const uploadIndex = parts.indexOf("upload");
+    if (uploadIndex === -1) return null;
+
+    // Get everything after 'upload' and the version
+    const pathParts = parts.slice(uploadIndex + 2);
+    const publicIdWithExt = pathParts.join("/");
+
+    // Remove file extension
+    const publicId = publicIdWithExt.substring(
+      0,
+      publicIdWithExt.lastIndexOf(".")
+    );
+    return publicId;
+  } catch (error) {
+    console.error("Error extracting public_id from URL:", error);
+    return null;
+  }
+}
+
+// Helper function to delete image from Cloudinary
+async function deleteImageFromCloudinary(imageUrl) {
+  if (!imageUrl) return;
+
+  const publicId = getPublicIdFromUrl(imageUrl);
+  if (!publicId) return;
+
+  try {
+    await cloudinary.uploader.destroy(publicId);
+    console.log(`Deleted image from Cloudinary: ${publicId}`);
+  } catch (error) {
+    console.error(`Failed to delete image from Cloudinary: ${publicId}`, error);
+  }
+}
+
+// Helper function to resolve createdBy to a valid ObjectId
+async function resolveCreatedBy(createdByValue) {
+  if (!createdByValue) return null;
+
+  // If it's already a valid ObjectId, return it
+  if (
+    mongoose.Types.ObjectId.isValid(createdByValue) &&
+    /^[0-9a-fA-F]{24}$/.test(createdByValue)
+  ) {
+    // Verify the user exists
+    try {
+      const user = await User.findById(createdByValue);
+      if (user) {
+        return createdByValue;
+      }
+      console.warn(`User with ID "${createdByValue}" not found`);
+      return null;
+    } catch (error) {
+      console.error("Error verifying user:", error);
+      return null;
+    }
+  }
+
+  // Otherwise, try to find user by username (for backward compatibility)
+  try {
+    const user = await User.findOne({ username: createdByValue });
+    if (user) {
+      return user._id;
+    }
+    // If user not found, return null
+    console.warn(`User with username "${createdByValue}" not found`);
+    return null;
+  } catch (error) {
+    console.error("Error resolving createdBy:", error);
+    return null;
+  }
+}
 
 export async function createQuestion(req, res) {
   try {
@@ -25,8 +107,8 @@ export async function createQuestion(req, res) {
         optionText2,
         optionText3,
         explanationText,
-        correctAnswer,
-        createdBy,
+        correctAnswer: correctAnswerValue,
+        createdBy: createdByValue,
       } = req.body;
 
       // Build title object
@@ -64,8 +146,8 @@ export async function createQuestion(req, res) {
         );
         explanation.image = uploaded.secure_url;
       }
-      correctAnswer = req.body.correctAnswer;
-      createdBy = formCreatedBy || null;
+      correctAnswer = correctAnswerValue;
+      createdBy = createdByValue || null;
     }
 
     // Validate categories if provided
@@ -101,6 +183,9 @@ export async function createQuestion(req, res) {
       }
     }
 
+    // Resolve createdBy to a valid ObjectId
+    const resolvedCreatedBy = await resolveCreatedBy(createdBy);
+
     const q = new Question({
       title,
       options,
@@ -108,7 +193,7 @@ export async function createQuestion(req, res) {
       explanation,
       categories: categoryIds,
       difficulty: parseInt(req.body.difficulty, 10) || 3,
-      createdBy: createdBy || null,
+      createdBy: resolvedCreatedBy,
     });
 
     await q.save();
@@ -121,7 +206,10 @@ export async function createQuestion(req, res) {
 
 export async function getQuestions(req, res) {
   try {
-    const questions = await Question.find();
+    const questions = await Question.find().populate(
+      "createdBy",
+      "username email"
+    );
     return res.status(200).json(questions);
   } catch (error) {
     return res.status(500).json({ error: "Error in fetching questions" });
@@ -130,7 +218,10 @@ export async function getQuestions(req, res) {
 
 export async function getQuestionById(req, res) {
   try {
-    const question = await Question.findById(req.params.id);
+    const question = await Question.findById(req.params.id).populate(
+      "createdBy",
+      "username email"
+    );
     if (!question) {
       return res.status(404).json({ error: "Question not found" });
     }
@@ -196,7 +287,8 @@ export async function updateQuestion(req, res) {
 
     // Update createdBy if provided
     if (req.body.createdBy !== undefined) {
-      existing.createdBy = req.body.createdBy || null;
+      const resolvedCreatedBy = await resolveCreatedBy(req.body.createdBy);
+      existing.createdBy = resolvedCreatedBy;
     }
 
     // Update categories if provided
@@ -248,12 +340,47 @@ export async function updateQuestion(req, res) {
 
 export async function deleteQuestion(req, res) {
   try {
-    const deletedQuestion = await Question.findByIdAndDelete(req.params.id);
-    if (!deletedQuestion) {
+    const question = await Question.findById(req.params.id);
+    if (!question) {
       return res.status(404).json({ error: "Question not found" });
     }
-    return res.status(200).json({ message: "Question deleted successfully" });
+
+    // Delete all associated images from Cloudinary
+    const imagesToDelete = [];
+
+    // Add title image
+    if (question.title?.image) {
+      imagesToDelete.push(question.title.image);
+    }
+
+    // Add option images
+    if (question.options && Array.isArray(question.options)) {
+      question.options.forEach((option) => {
+        if (option.image) {
+          imagesToDelete.push(option.image);
+        }
+      });
+    }
+
+    // Add explanation image
+    if (question.explanation?.image) {
+      imagesToDelete.push(question.explanation.image);
+    }
+
+    // Delete all images from Cloudinary
+    await Promise.all(
+      imagesToDelete.map((imageUrl) => deleteImageFromCloudinary(imageUrl))
+    );
+
+    // Delete the question from database
+    await Question.findByIdAndDelete(req.params.id);
+
+    return res.status(200).json({
+      message: "Question and associated images deleted successfully",
+      deletedImagesCount: imagesToDelete.length,
+    });
   } catch (error) {
+    console.error("Error deleting question:", error);
     return res.status(500).json({ error: "Error in deleting question" });
   }
 }
@@ -261,9 +388,9 @@ export async function deleteQuestion(req, res) {
 export async function getQuestionsByCategory(req, res) {
   try {
     const categoryId = req.params.categoryId;
-    const questions = await Question.find({ categories: categoryId }).populate(
-      "categories"
-    );
+    const questions = await Question.find({ categories: categoryId })
+      .populate("categories")
+      .populate("createdBy", "username email");
 
     if (questions.length === 0) {
       return res
@@ -276,5 +403,62 @@ export async function getQuestionsByCategory(req, res) {
     return res
       .status(500)
       .json({ error: "Error in fetching questions by category" });
+  }
+}
+
+export async function getQuestionsByDateRange(req, res) {
+  try {
+    const { fromDate, toDate } = req.query;
+
+    // Validate that both dates are provided
+    if (!fromDate || !toDate) {
+      return res.status(400).json({
+        error: "Both fromDate and toDate are required query parameters",
+      });
+    }
+
+    // Parse and validate dates
+    const startDate = new Date(fromDate);
+    const endDate = new Date(toDate);
+
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return res.status(400).json({
+        error:
+          "Invalid date format. Please use ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss.sssZ)",
+      });
+    }
+
+    // Ensure fromDate is not after toDate
+    if (startDate > endDate) {
+      return res.status(400).json({
+        error: "fromDate cannot be after toDate",
+      });
+    }
+
+    // Set endDate to end of day to include all questions created on that day
+    endDate.setHours(23, 59, 59, 999);
+
+    // Query questions within the date range
+    const questions = await Question.find({
+      createdAt: {
+        $gte: startDate,
+        $lte: endDate,
+      },
+    })
+      .populate("categories")
+      .populate("createdBy", "username email")
+      .sort({ createdAt: -1 }); // Sort by newest first
+
+    return res.status(200).json({
+      count: questions.length,
+      fromDate: startDate.toISOString(),
+      toDate: endDate.toISOString(),
+      questions,
+    });
+  } catch (error) {
+    console.error("Error fetching questions by date range:", error);
+    return res.status(500).json({
+      error: "Error in fetching questions by date range",
+    });
   }
 }

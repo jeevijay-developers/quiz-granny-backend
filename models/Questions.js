@@ -1,4 +1,3 @@
-import { populate } from "dotenv";
 import mongoose from "mongoose";
 
 const mediaTextSchema = new mongoose.Schema(
@@ -34,6 +33,12 @@ const questionSchema = new mongoose.Schema(
     },
     difficulty: { type: Number, required: true, enum: [1, 2, 3, 4, 5] },
     createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    isApproved: { type: Boolean, default: false },
+    approvedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,
