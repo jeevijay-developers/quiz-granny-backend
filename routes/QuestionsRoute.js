@@ -6,9 +6,11 @@ import {
   deleteQuestion,
   getQuestionsByCategory,
   getQuestionsByDateRange,
+  toggleQuestionApproval,
+  BulkUploadQuestionsController,
 } from "../controllers/QuestionsController.js";
 import express from "express";
-import { uploadMemory } from "../util/multerConfig.js";
+import { uploadCSV, uploadMemory } from "../util/multerConfig.js";
 import { validateQuestionMiddleware } from "../middleware/validateQuestion.js";
 
 const router = express.Router();
@@ -40,6 +42,12 @@ router.get("/filter-by-date", getQuestionsByDateRange);
 router.get("/category/:categoryId", getQuestionsByCategory);
 router.get("/:id", getQuestionById);
 router.put("/:id", conditionalMulter, updateQuestion); // Update doesn't need full validation
+router.patch("/:id/approval", toggleQuestionApproval); // Toggle approval status
 router.delete("/:id", deleteQuestion);
+router.post(
+  "/upload-csv-questions",
+  uploadCSV.single("file"),
+  BulkUploadQuestionsController
+);
 
 export default router;

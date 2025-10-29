@@ -4,6 +4,9 @@ import User from "../models/User.js";
 import { uploadBufferToCloudinary } from "../util/uploadToCloudinary.js";
 import cloudinary from "../util/cloudinary.js";
 import mongoose from "mongoose";
+import fs from "fs";
+import csv from "csvtojson";
+import XLSX from "xlsx";
 
 // Helper function to extract public_id from Cloudinary URL
 function getPublicIdFromUrl(url) {
@@ -206,10 +209,9 @@ export async function createQuestion(req, res) {
 
 export async function getQuestions(req, res) {
   try {
-    const questions = await Question.find().populate(
-      "createdBy",
-      "username email"
-    );
+    const questions = await Question.find()
+      .populate("createdBy", "username email")
+      .populate("approvedBy", "username email");
     return res.status(200).json(questions);
   } catch (error) {
     return res.status(500).json({ error: "Error in fetching questions" });
@@ -460,5 +462,128 @@ export async function getQuestionsByDateRange(req, res) {
     return res.status(500).json({
       error: "Error in fetching questions by date range",
     });
+  }
+}
+
+export async function toggleQuestionApproval(req, res) {
+  try {
+    const questionId = req.params.id;
+    const { isApproved, approvedBy } = req.body;
+
+    // Validate required fields
+    if (typeof isApproved !== "boolean") {
+      return res.status(400).json({
+        error: "isApproved field is required and must be a boolean",
+      });
+    }
+
+    if (isApproved && !approvedBy) {
+      return res.status(400).json({
+        error: "approvedBy is required when approving a question",
+      });
+    }
+
+    // Find the question
+    const question = await Question.findById(questionId);
+    if (!question) {
+      return res.status(404).json({ error: "Question not found" });
+    }
+
+    // Resolve approvedBy to valid ObjectId if approving
+    let resolvedApprovedBy = null;
+    if (isApproved) {
+      resolvedApprovedBy = await resolveCreatedBy(approvedBy);
+      if (!resolvedApprovedBy) {
+        return res.status(400).json({
+          error: "Invalid approvedBy user ID",
+        });
+      }
+    }
+
+    // Update approval status
+    question.isApproved = isApproved;
+    question.approvedBy = isApproved ? resolvedApprovedBy : null;
+
+    await question.save();
+
+    // Populate the response
+    await question.populate("createdBy", "username email");
+    await question.populate("approvedBy", "username email");
+    await question.populate("categories");
+
+    return res.status(200).json({
+      message: isApproved
+        ? "Question approved successfully"
+        : "Question disapproved successfully",
+      question,
+    });
+  } catch (error) {
+    console.error("Error toggling question approval:", error);
+    return res.status(500).json({
+      error: "Error in toggling question approval",
+    });
+  }
+}
+
+export async function BulkUploadQuestionsController(req, res) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded" });
+    }
+
+    const filePath = req.file.path;
+    let questionsData = [];
+
+    // Handle both CSV and Excel
+    if (req.file.originalname.endsWith(".csv")) {
+      questionsData = await csv().fromFile(filePath);
+    } else if (
+      req.file.originalname.endsWith(".xls") ||
+      req.file.originalname.endsWith(".xlsx")
+    ) {
+      const workbook = XLSX.readFile(filePath);
+      const sheetName = workbook.SheetNames[0];
+      questionsData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+    } else {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({ message: "Unsupported file format" });
+    }
+
+    // Deleting the temp file form /uploads folder
+    fs.unlinkSync(filePath);
+
+    // Transform data according to schema
+    const formattedQuestions = questionsData.map((q) => ({
+      title: {
+        text: q["Question Text"] || "",
+        image: q["Question Image"] || "",
+      },
+      options: [
+        { text: q["Option 1 Text"] || "", image: q["Option 1 Image"] || "" },
+        { text: q["Option 2 Text"] || "", image: q["Option 2 Image"] || "" },
+        { text: q["Option 3 Text"] || "", image: q["Option 3 Image"] || "" },
+        { text: q["Option 4 Text"] || "", image: q["Option 4 Image"] || "" },
+      ],
+      correctAnswer: Number(q["Correct Answer"]) || 1,
+      explanation: {
+        text: q["Explanation Text"] || "",
+        image: q["Explanation Image"] || "",
+      },
+      difficulty: Number(q["Difficulty"]) || 1,
+      categories: q["Categories"]
+        ? q["Categories"].split(",").map((id) => id.trim())
+        : [],
+      createdBy: req.user?._id || null, // optional if using auth
+    }));
+
+    await Question.insertMany(formattedQuestions);
+
+    return res.status(200).json({
+      message: "Questions uploaded successfully",
+      total: formattedQuestions.length,
+    });
+  } catch {
+    console.error("Error during bulk upload:", error);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 }

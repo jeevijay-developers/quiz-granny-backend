@@ -20,3 +20,5 @@ export const uploadMemory = multer({
     fileSize: 5 * 1024 * 1024, // 5MB max file size
   },
 });
+
+export const uploadCSV = multer({ dest: "uploads/" });
