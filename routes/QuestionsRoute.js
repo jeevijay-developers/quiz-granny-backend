@@ -8,6 +8,7 @@ import {
   getQuestionsByDateRange,
   toggleQuestionApproval,
   BulkUploadQuestionsController,
+  ExportQuestions,
 } from "../controllers/QuestionsController.js";
 import express from "express";
 import { uploadCSV, uploadMemory } from "../util/multerConfig.js";
@@ -38,11 +39,12 @@ const conditionalMulter = (req, res, next) => {
 // Routes with conditional multer middleware and validation for create and update
 router.post("/", conditionalMulter, validateQuestionMiddleware, createQuestion);
 router.get("/", getQuestions);
+router.get("/export", ExportQuestions); // Export all questions as CSV - MUST be before /:id
 router.get("/filter-by-date", getQuestionsByDateRange);
 router.get("/category/:categoryId", getQuestionsByCategory);
 router.get("/:id", getQuestionById);
-router.put("/:id", conditionalMulter, updateQuestion); // Update doesn't need full validation
-router.patch("/:id/approval", toggleQuestionApproval); // Toggle approval status
+router.put("/:id", conditionalMulter, updateQuestion);
+router.patch("/:id/approval", toggleQuestionApproval);
 router.delete("/:id", deleteQuestion);
 router.post(
   "/upload-csv-questions",

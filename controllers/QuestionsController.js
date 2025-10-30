@@ -549,41 +549,319 @@ export async function BulkUploadQuestionsController(req, res) {
       return res.status(400).json({ message: "Unsupported file format" });
     }
 
-    // Deleting the temp file form /uploads folder
+    // Deleting the temp file from /uploads folder
     fs.unlinkSync(filePath);
 
-    // Transform data according to schema
-    const formattedQuestions = questionsData.map((q) => ({
-      title: {
-        text: q["Question Text"] || "",
-        image: q["Question Image"] || "",
-      },
-      options: [
-        { text: q["Option 1 Text"] || "", image: q["Option 1 Image"] || "" },
-        { text: q["Option 2 Text"] || "", image: q["Option 2 Image"] || "" },
-        { text: q["Option 3 Text"] || "", image: q["Option 3 Image"] || "" },
-        { text: q["Option 4 Text"] || "", image: q["Option 4 Image"] || "" },
-      ],
-      correctAnswer: Number(q["Correct Answer"]) || 1,
-      explanation: {
-        text: q["Explanation Text"] || "",
-        image: q["Explanation Image"] || "",
-      },
-      difficulty: Number(q["Difficulty"]) || 1,
-      categories: q["Categories"]
-        ? q["Categories"].split(",").map((id) => id.trim())
-        : [],
-      createdBy: req.user?._id || null, // optional if using auth
-    }));
+    if (questionsData.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "File is empty. No questions to import.",
+      });
+    }
 
-    await Question.insertMany(formattedQuestions);
+    const results = {
+      successful: [],
+      failed: [],
+      skipped: [],
+    };
 
-    return res.status(200).json({
-      message: "Questions uploaded successfully",
-      total: formattedQuestions.length,
+    // Process each question
+    for (let i = 0; i < questionsData.length; i++) {
+      const q = questionsData[i];
+      const rowNumber = i + 2; // +2 because row 1 is header and arrays are 0-indexed
+
+      try {
+        // Validate mandatory fields
+        if (!q["title_text"] || q["title_text"].trim() === "") {
+          results.failed.push({
+            row: rowNumber,
+            data: q,
+            reason: "Question title text is required",
+          });
+          continue;
+        }
+
+        // Validate options (at least 2 required, max 4)
+        const options = [];
+        for (let optNum = 1; optNum <= 4; optNum++) {
+          const text = q[`option${optNum}_text`];
+          const image = q[`option${optNum}_image`] || "";
+
+          if (text && text.trim() !== "") {
+            options.push({
+              text: text.trim(),
+              image: image.trim(),
+            });
+          }
+        }
+
+        if (options.length < 2) {
+          results.failed.push({
+            row: rowNumber,
+            data: q,
+            reason: "At least 2 options are required",
+          });
+          continue;
+        }
+
+        // Validate correctAnswer
+        const correctAnswerIndex = parseInt(q["correctAnswer_index"], 10);
+        if (
+          isNaN(correctAnswerIndex) ||
+          correctAnswerIndex < 0 ||
+          correctAnswerIndex >= options.length
+        ) {
+          results.failed.push({
+            row: rowNumber,
+            data: q,
+            reason: `Invalid correct answer index. Must be between 0 and ${options.length - 1}`,
+          });
+          continue;
+        }
+
+        // Validate difficulty
+        let difficulty = parseInt(q["difficulty"], 10);
+        if (isNaN(difficulty) || difficulty < 1 || difficulty > 5) {
+          difficulty = 3; // Default to medium
+        }
+
+        // Parse and validate categories (optional but strict)
+        let categoryIds = [];
+        if (q["categories"] && q["categories"].trim() !== "") {
+          const categoryNames = q["categories"]
+            .split(",")
+            .map((name) => name.trim())
+            .filter((name) => name !== ""); // Remove empty strings
+
+          if (categoryNames.length > 0) {
+            const invalidCategories = [];
+
+            // Find categories by name and validate all exist
+            for (const catName of categoryNames) {
+              const category = await Category.findOne({ name: catName });
+              if (category) {
+                categoryIds.push(category._id);
+              } else {
+                // Try as ObjectId if name lookup fails
+                if (mongoose.Types.ObjectId.isValid(catName)) {
+                  const catById = await Category.findById(catName);
+                  if (catById) {
+                    categoryIds.push(catById._id);
+                  } else {
+                    invalidCategories.push(catName);
+                  }
+                } else {
+                  invalidCategories.push(catName);
+                }
+              }
+            }
+
+            // If any category is invalid, fail this row
+            if (invalidCategories.length > 0) {
+              results.failed.push({
+                row: rowNumber,
+                data: q,
+                reason: `Invalid category name(s): ${invalidCategories.join(", ")}. Categories must exist in the database.`,
+              });
+              continue;
+            }
+          }
+        }
+
+        // Check if question with same title already exists
+        const existingQuestion = await Question.findOne({
+          "title.text": q["title_text"].trim(),
+        });
+
+        if (existingQuestion) {
+          results.skipped.push({
+            row: rowNumber,
+            title: q["title_text"].trim(),
+            reason: "Question with same title already exists",
+          });
+          continue;
+        }
+
+        // Resolve createdBy (optional)
+        let resolvedCreatedBy = null;
+        if (q["createdBy_username"] && q["createdBy_username"].trim() !== "") {
+          const creator = await User.findOne({
+            username: q["createdBy_username"].trim(),
+          });
+          if (creator) {
+            resolvedCreatedBy = creator._id;
+          }
+        } else if (req.user?._id) {
+          resolvedCreatedBy = req.user._id;
+        }
+
+        // Create the question
+        const newQuestion = new Question({
+          title: {
+            text: q["title_text"].trim(),
+            image: q["title_image"] ? q["title_image"].trim() : "",
+          },
+          options: options,
+          correctAnswer: correctAnswerIndex,
+          explanation: {
+            text: q["explanation_text"] ? q["explanation_text"].trim() : "",
+            image: q["explanation_image"] ? q["explanation_image"].trim() : "",
+          },
+          difficulty: difficulty,
+          categories: categoryIds,
+          createdBy: resolvedCreatedBy,
+          isApproved: false, // New imports default to not approved
+          approvedBy: null,
+        });
+
+        await newQuestion.save();
+
+        // Populate for response
+        await newQuestion.populate("categories", "name");
+        await newQuestion.populate("createdBy", "username email");
+
+        results.successful.push({
+          row: rowNumber,
+          question: newQuestion,
+        });
+      } catch (error) {
+        results.failed.push({
+          row: rowNumber,
+          data: q,
+          reason: error.message,
+        });
+      }
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "Bulk import completed",
+      summary: {
+        total: questionsData.length,
+        successful: results.successful.length,
+        failed: results.failed.length,
+        skipped: results.skipped.length,
+      },
+      results,
     });
-  } catch {
+  } catch (error) {
     console.error("Error during bulk upload:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  }
+}
+
+export async function ExportQuestions(req, res) {
+  try {
+    // Fetch all questions with useful related data
+    const questions = await Question.find()
+      .populate("createdBy", "username email")
+      .populate("approvedBy", "username email")
+      .populate("categories", "name")
+      .sort({ createdAt: -1 });
+
+    // Helper to safely escape CSV fields
+    const escape = (value) => {
+      if (value === null || value === undefined) return "";
+      const str = String(value);
+      // Escape double quotes by doubling them, wrap field in double quotes
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
+    // Build CSV header
+    const headers = [
+      "_id",
+      "title_text",
+      "title_image",
+      "option1_text",
+      "option1_image",
+      "option2_text",
+      "option2_image",
+      "option3_text",
+      "option3_image",
+      "option4_text",
+      "option4_image",
+      "correctAnswer_index",
+      "correctAnswer_text",
+      "explanation_text",
+      "explanation_image",
+      "difficulty",
+      "categories",
+      "isApproved",
+      "approvedBy_username",
+      "approvedBy_email",
+      "createdBy_username",
+      "createdBy_email",
+      "createdAt",
+      "updatedAt",
+    ];
+
+    const rows = questions.map((q) => {
+      // Ensure options array has 4 entries
+      const opts = Array.isArray(q.options) ? q.options.slice(0, 4) : [];
+      while (opts.length < 4) opts.push({ text: "", image: "" });
+
+      const correctIndex = q.correctAnswer;
+      let correctText = "";
+      // If stored as 0-based or 1-based number, try to pick a matching option
+      if (typeof correctIndex === "number") {
+        if (opts[correctIndex]) correctText = opts[correctIndex].text || "";
+        else if (opts[correctIndex - 1])
+          correctText = opts[correctIndex - 1].text || "";
+      }
+
+      const categoryNames = Array.isArray(q.categories)
+        ? q.categories
+            .map((c) =>
+              c && c.name ? c.name : c && c._id ? String(c._id) : ""
+            )
+            .join(", ")
+        : "";
+
+      const row = [
+        q._id,
+        q.title?.text || "",
+        q.title?.image || "",
+        opts[0].text || "",
+        opts[0].image || "",
+        opts[1].text || "",
+        opts[1].image || "",
+        opts[2].text || "",
+        opts[2].image || "",
+        opts[3].text || "",
+        opts[3].image || "",
+        correctIndex !== undefined && correctIndex !== null ? correctIndex : "",
+        correctText,
+        q.explanation?.text || "",
+        q.explanation?.image || "",
+        q.difficulty != null ? q.difficulty : "",
+        categoryNames,
+        q.isApproved === true ? "true" : "false",
+        q.approvedBy?.username || "",
+        q.approvedBy?.email || "",
+        q.createdBy?.username || "",
+        q.createdBy?.email || "",
+        q.createdAt ? q.createdAt.toISOString() : "",
+        q.updatedAt ? q.updatedAt.toISOString() : "",
+      ];
+
+      return row.map(escape).join(",");
+    });
+
+    const csvContent = [headers.join(","), ...rows].join("\n");
+
+    // Send as downloadable CSV
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=questions_export_${new Date().toISOString().slice(0, 10)}.csv`
+    );
+    return res.status(200).send(csvContent);
+  } catch (error) {
+    console.error("Error exporting questions:", error);
+    return res.status(500).json({ error: "Error exporting questions" });
   }
 }

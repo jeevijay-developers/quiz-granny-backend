@@ -23,7 +23,7 @@ export async function createUser(req, res) {
 
     if (existingUser) {
       return res.status(400).json({
-        error: "User with this email or username already exists",
+        error: "User with this email already exists",
       });
     }
 
@@ -102,7 +102,7 @@ export async function updateUser(req, res) {
 
       if (existingUser) {
         return res.status(400).json({
-          error: "User with this email or username already exists",
+          error: "User with this email already exists",
         });
       }
     }
